@@ -11,15 +11,7 @@ const c = {
   fg: (n: number, s: string) => `${ESC}38;5;${n}m${s}${ESC}39m`,
 };
 const PROVIDER_COLOR = { codex: 39, claude: 209 } as const; // blue, orange
-const STATUS_COLOR = { active: 82, idle: 220, done: 245, unknown: 245 } as const;
 const NA = '--';
-
-type Status = keyof typeof STATUS_COLOR;
-export function status(s: Session, now: number): Status {
-  if (!s.lastEvent) return 'unknown';
-  const age = now - s.lastActive;
-  return age < 30_000 ? 'active' : age < 30 * 60_000 ? 'idle' : 'done';
-}
 
 export function fmtTokens(n: number): string {
   if (n < 1000) return String(n);
@@ -48,7 +40,6 @@ const COLS: Col[] = [
   { title: 'ACCOUNT', width: 14, prio: 0, get: (s) => s.source },
   { title: 'PROJECT', width: 18, prio: 1, get: (s) => s.project || NA },
   { title: 'MODEL', width: 18, prio: 5, get: (s) => s.model ?? NA },
-  { title: 'STATUS', width: 7, prio: 3, get: (s, now) => status(s, now) },
   { title: 'TOKENS', width: 7, right: true, prio: 0, get: (s) => fmtTokens(totalTokens(s)) },
   { title: 'IN', width: 7, right: true, prio: 7, get: (s) => fmtTokens(s.usage.input) },
   { title: 'CACHED', width: 7, right: true, prio: 7, get: (s) => fmtTokens(s.usage.cacheRead) },
@@ -131,10 +122,8 @@ export class Tui {
     this.top = Math.max(0, Math.min(this.top, Math.max(0, this.rows.length - avail)));
 
     for (const s of this.rows.slice(this.top, this.top + avail)) {
-      const st = status(s, now);
       const cells = cols.map((col) => {
         const text = fit(col.get(s, now), col.width, col.right);
-        if (col.title === 'STATUS') return c.fg(STATUS_COLOR[st], text);
         if (text.trim() === NA || text.trim() === 'N/A') return c.dim(text);
         return text;
       });
@@ -155,7 +144,7 @@ export class Tui {
     const u = s.usage;
     return [
       c.dim('─'.repeat(Math.min(this.out.columns || 80, 100))),
-      `${c.bold(s.source)} · ${s.project || NA} · ${s.model ?? NA} · ${status(s, now)} · session ${s.id}`,
+      `${c.bold(s.source)} · ${s.project || NA} · ${s.model ?? NA} · session ${s.id}`,
       `input ${fmtTokens(u.input)}  cache read ${fmtTokens(u.cacheRead)}  cache write ${fmtTokens(u.cacheWrite5m + u.cacheWrite1h)}  ` +
         `output ${fmtTokens(u.output)}  reasoning ${u.reasoning ? fmtTokens(u.reasoning) : NA}`,
       `context ${s.ctxTokens === null ? NA : fmtTokens(s.ctxTokens)} / ${s.ctxWindow ? fmtTokens(s.ctxWindow) : NA}  ` +

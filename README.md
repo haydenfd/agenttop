@@ -52,7 +52,6 @@ Prices: Claude models are built in. Add or override any model in
 | CTX | tokens in context at the latest request ÷ model context window |
 | TPS | output tokens ÷ seconds the last 5 API requests were in flight. A request runs from when its input (your prompt or a tool result) was logged to when its response finished logging, so tool execution and idle time are excluded. It still includes prompt processing and time to first token, so it reads a bit below pure decode speed. `--` when there is not enough data |
 | COST | API-equivalent USD; `N/A` if any request's model has no price |
-| STATUS | active (log written < 30 s ago), idle (< 30 min), done, unknown (no usage yet) |
 
 
 ## How the numbers are counted
