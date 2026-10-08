@@ -1,0 +1,9 @@
+{
+  "name": "agenttop",
+  "version": "0.1.0",
+  "description": "Read-only TUI for token usage, TPS and API-equivalent cost across Codex and Claude Code accounts",
+  "type": "module",
+  "bin": { "agenttop": "bin/agenttop.ts" },
+  "engines": { "node": ">=23.6" },
+  "scripts": { "test": "node --test 'test/*.test.ts'", "start": "node bin/agenttop.ts" }
+}
