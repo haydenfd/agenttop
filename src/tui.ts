@@ -83,8 +83,28 @@ export class Tui {
 
   private key = (s: Session) => `${s.source}/${s.id}`;
 
+  private tab = 0; // 0 = All, i = watchers[i - 1]
+
+  // Tabs: All, then one per configured source (agent account).
+  private tabs = () => ['All', ...this.watchers.map((w) => w.cfg.name)];
+
+  switchTab(delta: number): void {
+    const n = this.tabs().length;
+    this.tab = (this.tab + delta + n) % n;
+    this.refreshRows();
+    this.render();
+  }
+
+  selectTab(i: number): void {
+    if (i < 0 || i >= this.tabs().length) return;
+    this.tab = i;
+    this.refreshRows();
+    this.render();
+  }
+
   refreshRows(): void {
-    this.rows = this.watchers.flatMap((w) => w.list())
+    const shown = this.tab === 0 ? this.watchers : [this.watchers[this.tab - 1]];
+    this.rows = shown.flatMap((w) => w.list())
       .sort((a, b) => b.lastActive - a.lastActive || a.id.localeCompare(b.id));
     const i = this.rows.findIndex((s) => this.key(s) === this.selKey);
     this.sel = i >= 0 ? i : Math.min(this.sel, Math.max(0, this.rows.length - 1));
@@ -105,11 +125,15 @@ export class Tui {
     const height = this.out.rows || 24;
     const now = Date.now();
     const lines: string[] = [];
-    const sources = this.watchers.length;
-    lines.push(c.bold('agenttop') + c.dim(`  ${this.rows.length} sessions · ${sources} sources`) +
-      (this.loading ? c.dim('  · loading…') : ''));
+    lines.push(c.bold('agenttop') + (this.loading ? c.dim('  loading…') : ''));
     const warnings = this.watchers.map((w) => w.warning).filter(Boolean) as string[];
     for (const w of warnings) lines.push(c.fg(220, `! ${w}`));
+    lines.push('');
+    lines.push(this.tabs().map((name, i) => {
+      const n = (i === 0 ? this.watchers : [this.watchers[i - 1]]).reduce((t, w) => t + w.list().length, 0);
+      const label = ` ${i + 1} ${name} (${n}) `;
+      return i === this.tab ? c.inv(c.bold(label)) : c.dim(label);
+    }).join(' '));
     lines.push('');
 
     const cols = visibleCols(width);
@@ -136,7 +160,7 @@ export class Tui {
     while (lines.length < height - footer - detailLines.length) lines.push('');
     lines.push(...detailLines);
     lines.push('');
-    lines.push(c.dim(fit('↑↓/jk navigate · PgUp/PgDn · Enter details · q/Esc/Ctrl+C exit · TPS = session output tok/s while requests are in flight', width)));
+    lines.push(c.dim(fit('←→/Tab/1-9 filter · ↑↓/jk navigate · Enter details · q/Esc/Ctrl+C exit · TPS = session output tok/s while requests are in flight', width)));
 
     this.out.write(`${ESC}H` + lines.slice(0, height).map((l) => l + `${ESC}K`).join('\r\n') + `${ESC}J`);
   }

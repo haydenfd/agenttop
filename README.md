@@ -9,7 +9,7 @@ npm link        # once: puts `agenttop` on your PATH
 agenttop
 ```
 
-Keys: `↑↓`/`jk` move · `PgUp`/`PgDn` · `g`/`G` top/bottom · `Enter` details · `q`/`Esc`/`Ctrl+C` exit.
+Keys: `←→`/`Tab`/`1`-`9` filter by account (All, then one tab per source) · `↑↓`/`jk` move · `PgUp`/`PgDn` · `g`/`G` top/bottom · `Enter` details · `q`/`Esc`/`Ctrl+C` exit.
 
 ## Config
 

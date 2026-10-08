@@ -42,6 +42,9 @@ process.stdin.on('data', (buf) => {
   else if (k === '\x1b[H' || k === 'g') tui.move(-Infinity);
   else if (k === '\x1b[F' || k === 'G') tui.move(Infinity);
   else if (k === '\r') tui.toggleDetails();
+  else if (k === '\x1b[C' || k === '\t' || k === 'l') tui.switchTab(1);
+  else if (k === '\x1b[D' || k === '\x1b[Z' || k === 'h') tui.switchTab(-1);
+  else if (k >= '1' && k <= '9') tui.selectTab(Number(k) - 1);
 });
 process.stdout.on('resize', () => tui.render());
 
