@@ -32,6 +32,12 @@ const totalTokens = (s: Session) =>
 const fmtCost = (s: Session) => (s.unpriced || !s.lastEvent ? 'N/A' : `$${s.cost.toFixed(2)}`);
 const fmtCtx = (s: Session) =>
   s.ctxTokens === null || !s.ctxWindow ? NA : `${Math.round((100 * s.ctxTokens) / s.ctxWindow)}%`;
+// Share of all input tokens (uncached + cache read + cache write) served from the cache.
+const fmtCache = (s: Session) => {
+  const u = s.usage;
+  const all = u.input + u.cacheRead + u.cacheWrite5m + u.cacheWrite1h;
+  return all ? `${Math.round((100 * u.cacheRead) / all)}%` : NA;
+};
 const fmtTps = (s: Session) => { const t = tps(s); return t === null ? NA : t.toFixed(1); };
 
 interface Col { title: string; width: number; right?: boolean; prio: number; get: (s: Session, now: number) => string }
@@ -43,7 +49,7 @@ const COLS: Col[] = [
   { title: 'MODEL', width: 18, prio: 5, get: (s) => s.model ?? NA },
   { title: 'TOKENS', width: 7, right: true, prio: 0, get: (s) => fmtTokens(totalTokens(s)) },
   { title: 'IN', width: 7, right: true, prio: 7, get: (s) => fmtTokens(s.usage.input) },
-  { title: 'CACHED', width: 7, right: true, prio: 7, get: (s) => fmtTokens(s.usage.cacheRead) },
+  { title: 'CACHE', width: 6, right: true, prio: 6, get: fmtCache },
   { title: 'OUT', width: 7, right: true, prio: 6, get: (s) => fmtTokens(s.usage.output) },
   { title: 'CTX', width: 5, right: true, prio: 2, get: fmtCtx },
   { title: 'TPS', width: 6, right: true, prio: 2, get: fmtTps },

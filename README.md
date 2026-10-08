@@ -50,6 +50,7 @@ Prices: Claude models and `gpt-6.1-sol` are built in ($2 in / $0.10 cached / $10
 | ● | blue = Codex, orange = Claude |
 | SESSION | the name you gave the session, else the auto-generated title (Claude `customTitle`/`aiTitle`, Codex `thread_name` from `session_index.jsonl`) |
 | TOKENS | input + cache read + cache write + output, deduplicated |
+| CACHE | % of all input tokens read from the prompt cache (cache reads ÷ uncached + cache reads + cache writes) |
 | CTX | tokens in context at the latest request ÷ model context window |
 | TPS | output tokens ÷ seconds in flight, summed over every API request in the session. A request runs from when its input (your prompt or a tool result) was logged to when its response finished logging, so tool execution and idle time are excluded. It still includes prompt processing and time to first token, so it reads a bit below pure decode speed. `--` when there is not enough data |
 | COST | API-equivalent USD; `N/A` if any request's model has no price |
