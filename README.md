@@ -1,0 +1,90 @@
+# agenttop
+
+Read-only terminal UI showing token usage, context, throughput and API-equivalent cost for
+Codex and Claude Code sessions across multiple accounts. No dependencies; needs Node ≥ 23.6
+(runs the TypeScript directly).
+
+```sh
+npm link        # once: puts `agenttop` on your PATH
+agenttop
+```
+
+Keys: `↑↓`/`jk` move · `PgUp`/`PgDn` · `g`/`G` top/bottom · `Enter` details · `q`/`Esc`/`Ctrl+C` exit.
+
+## Config
+
+`~/.config/agenttop/config.toml` (if missing, defaults to `~/.codex` and `~/.claude`):
+
+```toml
+days = 1   # load sessions whose log changed in the last N days
+
+[[sources]]
+name = "codex"
+provider = "codex"
+home = "~/.codex"
+
+[[sources]]
+name = "codex-burner"
+provider = "codex"
+home = "~/.codex-burner"
+
+[[sources]]
+name = "claude"
+provider = "claude"
+home = "~/.claude"
+```
+
+Prices: Claude models are built in. Add or override any model in
+`~/.config/agenttop/pricing.json` (USD per 1M tokens; `context` optional):
+
+```json
+{ "gpt-6.1-sol": { "input": 1.25, "output": 10, "cacheRead": 0.125, "context": 475000 } }
+```
+
+(Example numbers only. Use your provider's published prices.) Models without a price show `N/A`, never `$0`.
+
+## Columns
+
+| Column | Meaning |
+|---|---|
+| ● | blue = Codex, orange = Claude |
+| TOKENS | input + cache read + cache write + output, deduplicated |
+| CTX | tokens in context at the latest request ÷ model context window |
+| eTPS | **effective** TPS: output tokens ÷ wall-clock seconds over the last 60 s of logged activity. Includes tool time and pauses, so it is *not* decoding speed. `--` when there is not enough data |
+| COST | API-equivalent USD; `N/A` if any request's model has no price |
+| STATUS | active (log written < 30 s ago), idle (< 30 min), done, unknown (no usage yet) |
+
+Generation (decode) TPS is always N/A: neither log format records how long decoding took.
+
+## How the numbers are counted
+
+**Claude Code**: `<home>/projects/<project>/<session>.jsonl`, plus subagent logs in
+`<session>/subagents/*.jsonl`, which are added to the parent session.
+- Every assistant line has per-request `message.usage`. Streaming writes the same message
+  once per content block with the same usage, so requests are keyed by `message.id` and
+  later copies **replace** earlier ones instead of adding.
+- Cost = input × in + output × out + cache read × read + 5-min cache write × 1.25 in +
+  1-hour cache write × 2 in. Output includes thinking tokens.
+- Context = input + cache read + cache write of the latest main-thread request.
+- `<synthetic>` placeholder messages are ignored.
+
+**Codex**: `<home>/sessions/YYYY/MM/DD/rollout-*.jsonl`
+- `token_count` events carry `total_token_usage`, a running total kept by Codex. The latest
+  total is the session total. Repeated events with the same total are ignored, and each
+  increase is priced with the model active at that point (`turn_context.model`).
+- Codex's `input_tokens` already includes cached input, so cached tokens are subtracted
+  before pricing to avoid charging them twice.
+- Context = latest `last_token_usage` input + output ÷ `model_context_window`.
+- If two Codex homes share one `sessions` directory (e.g. a symlink), sessions are assigned
+  by matching the log's `creator_account_id` to `tokens.account_id` in that home's
+  `auth.json`. That is the only field read from `auth.json`.
+
+**Files**: polled every second; only bytes appended since the last read are parsed, and an
+unfinished last line is held until it is complete. New session files are found every 5 s.
+Nothing is ever written to agent directories.
+
+## Tests
+
+```sh
+npm test
+```

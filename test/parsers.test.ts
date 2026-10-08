@@ -124,3 +124,16 @@ test('watcher: discovers new sessions, tails appends, holds partial lines', () =
   assert.equal(byId.sess1.usage.output, 168);
   assert.equal(byId.sess2.usage.output, 56);
 });
+
+test('watcher: codex homes sharing a sessions dir are split by account id', () => {
+  const home = mkdtempSync(join(tmpdir(), 'agenttop-codex-'));
+  const day = join(home, 'sessions', '2026', '10', '07');
+  mkdirSync(day, { recursive: true });
+  writeFileSync(join(home, 'auth.json'), JSON.stringify({ tokens: { account_id: 'acct-A' } }));
+  const meta = (acct: string) => JSON.stringify({ type: 'session_meta', payload: { cwd: '/p', creator_account_id: acct } }) + '\n';
+  writeFileSync(join(day, 'rollout-2026-10-07T00-00-00-aaa.jsonl'), meta('acct-A'));
+  writeFileSync(join(day, 'rollout-2026-10-07T00-00-00-bbb.jsonl'), meta('acct-B'));
+  const w = new SourceWatcher({ name: 'codex', provider: 'codex', home }, 1);
+  w.scan(); w.poll();
+  assert.deepEqual(w.list().map((s) => s.id), ['aaa']);
+});

@@ -30,6 +30,7 @@ export function codexLine(s: Session, st: CodexState, d: any): void {
   if (!p) return;
   if (d.type === 'session_meta') {
     if (p.cwd) s.project = basename(p.cwd);
+    if (p.creator_account_id) s.account = p.creator_account_id;
     return;
   }
   if (d.type === 'turn_context') {

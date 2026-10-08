@@ -2,7 +2,7 @@
 // Read-only: files are opened with 'r' and never written. Polling (no fs.watch) keeps it
 // portable; each poll is one stat() per tracked file plus a read of only the new bytes.
 
-import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { type ClaudeState, claudeLine, newClaudeState } from './claude.ts';
 import { type CodexState, codexLine, newCodexState } from './codex.ts';
@@ -20,10 +20,16 @@ export class SourceWatcher {
   private files = new Map<string, FileState>();
   warning: string | null = null;
   private maxAgeMs: number;
+  // Codex homes can share one sessions dir (e.g. a symlink); the logged-in account id
+  // tells which sessions belong to this source. Only this one field of auth.json is read.
+  private accountId: string | null = null;
 
   constructor(cfg: SourceConfig, days: number) {
     this.cfg = cfg;
     this.maxAgeMs = days * 86_400_000;
+    if (cfg.provider === 'codex') {
+      try { this.accountId = JSON.parse(readFileSync(join(cfg.home, 'auth.json'), 'utf8')).tokens?.account_id ?? null; } catch {}
+    }
   }
 
   // Discover new log files. Cheap enough to run every few seconds.
@@ -132,7 +138,8 @@ export class SourceWatcher {
   }
 
   list(): Session[] {
-    return [...this.sessions.values()].map((e) => e.session);
+    return [...this.sessions.values()].map((e) => e.session)
+      .filter((s) => !this.accountId || !s.account || s.account === this.accountId);
   }
 }
 
