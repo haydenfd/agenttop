@@ -37,6 +37,7 @@ export class SourceWatcher {
     const { home, provider } = this.cfg;
     if (!existsSync(home)) { this.warning = `${this.cfg.name}: ${home} not found`; return; }
     this.warning = null;
+    if (provider === 'codex') this.loadThreadNames();
     const found: [string, string, boolean][] = []; // [path, sessionKey, isSubagent]
     if (provider === 'claude') {
       const root = join(home, 'projects');
@@ -127,7 +128,7 @@ export class SourceWatcher {
   private line(text: string, f: FileState, e: Entry): void {
     // Skip JSON.parse for lines that cannot matter (most of a log is message content).
     if (e.session.provider === 'claude') {
-      if (!text.includes('"usage"') && !text.includes('"type":"user"') && (e.session.project || !text.includes('"cwd"'))) return;
+      if (!/"usage"|"type":"user"|"(custom|ai)-title"/.test(text) && (e.session.project || !text.includes('"cwd"'))) return;
     } else if (!/"(token_count|turn_context|session_meta|function_call_output|custom_tool_call_output|local_shell_call_output)"|"role":"user"/.test(text)) {
       return;
     }
@@ -137,7 +138,25 @@ export class SourceWatcher {
     else codexLine(e.session, e.state as CodexState, d, f.clock);
   }
 
+  // Codex keeps thread names in <home>/session_index.jsonl (one line per rename; last wins).
+  private names = new Map<string, string>();
+  private namesMtime = 0;
+  private loadThreadNames(): void {
+    const path = join(this.cfg.home, 'session_index.jsonl');
+    let mtime: number;
+    try { mtime = statSync(path).mtimeMs; } catch { return; }
+    if (mtime === this.namesMtime) return;
+    this.namesMtime = mtime;
+    for (const line of readFileSync(path, 'utf8').split('\n')) {
+      try { const d = JSON.parse(line); if (d.id && d.thread_name) this.names.set(d.id, d.thread_name); } catch {}
+    }
+  }
+
   list(): Session[] {
+    if (this.names.size) for (const e of this.sessions.values()) {
+      const n = this.names.get(e.session.id);
+      if (n) e.session.title = n;
+    }
     return [...this.sessions.values()].map((e) => e.session)
       .filter((s) => !this.accountId || !s.account || s.account === this.accountId);
   }

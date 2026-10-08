@@ -23,6 +23,8 @@ export interface Session {
   source: string;            // account name from config
   provider: Provider;
   project: string;           // basename of cwd
+  branch: string;            // git branch
+  title: string;             // session name (user-set or auto-generated)
   account: string | null;    // codex: creator_account_id from session_meta
   model: string | null;      // latest model seen
   usage: Usage;              // deduplicated session totals
@@ -37,7 +39,7 @@ export interface Session {
 
 export function newSession(id: string, source: string, provider: Provider): Session {
   return {
-    id, source, provider, project: '', account: null, model: null, usage: zeroUsage(),
+    id, source, provider, project: '', branch: '', title: '', account: null, model: null, usage: zeroUsage(),
     ctxTokens: null, ctxWindow: null, cost: 0, unpriced: false, lastEvent: 0, lastActive: 0, reqs: [],
   };
 }
