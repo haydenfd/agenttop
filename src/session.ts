@@ -32,36 +32,39 @@ export interface Session {
   unpriced: boolean;         // true if any request's model had no price -> show N/A
   lastEvent: number;         // ms epoch of latest usage-bearing event
   lastActive: number;        // ms epoch of latest log file write (drives status + sort)
-  // (timestamp ms, cumulative output tokens) for effective TPS
-  samples: [number, number][];
+  reqs: Req[];               // most recent API requests, for TPS
 }
 
 export function newSession(id: string, source: string, provider: Provider): Session {
   return {
     id, source, provider, project: '', account: null, model: null, usage: zeroUsage(),
-    ctxTokens: null, ctxWindow: null, cost: 0, unpriced: false, lastEvent: 0, lastActive: 0, samples: [],
+    ctxTokens: null, ctxWindow: null, cost: 0, unpriced: false, lastEvent: 0, lastActive: 0, reqs: [],
   };
 }
 
-export function recordSample(s: Session, ts: number): void {
-  const last = s.samples[s.samples.length - 1];
-  if (last && ts < last[0]) { last[1] = s.usage.output; return; } // out-of-order (subagent backfill)
-  s.samples.push([ts, s.usage.output]);
-  if (s.samples.length > MAX_SAMPLES) s.samples.shift();
+// One API request: output tokens and the time it was in flight, from the moment its input
+// (prompt or tool result) was logged to the moment its response was logged. Tool execution
+// and idle time fall outside every request, so they never count.
+export interface Req { start: number; end: number; out: number }
+
+// Per-log-file timing state: when the latest request input was logged.
+export interface Clock { lastInput: number }
+
+const MAX_REQS = 5;
+
+export function recordReq(s: Session, r: Req): void {
+  s.reqs.push(r);
+  if (s.reqs.length > MAX_REQS) s.reqs.shift();
 }
 
-const MAX_SAMPLES = 9;      // last 8 intervals between usage events
-const IDLE_GAP_MS = 120_000; // longer gaps are user/think time, not agent work
-
-// Effective TPS: output tokens / wall-clock seconds across the most recent intervals between
-// usage events, skipping idle gaps. Includes tool time and prefill, so it is NOT decoding speed.
-export function effectiveTps(s: Session): number | null {
+// TPS over the last few requests: total output tokens / total in-flight seconds.
+// Includes prompt processing and time-to-first-token, which the logs cannot separate out.
+export function tps(s: Session): number | null {
   let out = 0, ms = 0;
-  for (let i = 1; i < s.samples.length; i++) {
-    const dt = s.samples[i][0] - s.samples[i - 1][0];
-    if (dt > IDLE_GAP_MS) continue;
-    ms += dt;
-    out += s.samples[i][1] - s.samples[i - 1][1];
+  for (const r of s.reqs) {
+    if (r.end <= r.start || r.out <= 0) continue;
+    out += r.out;
+    ms += r.end - r.start;
   }
-  return ms < 5000 ? null : out / (ms / 1000);
+  return ms < 500 ? null : out / (ms / 1000);
 }

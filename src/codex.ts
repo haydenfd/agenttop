@@ -7,10 +7,10 @@
 
 import { basename } from 'node:path';
 import { cost } from './pricing.ts';
-import { type Session, type Usage, zeroUsage, recordSample } from './session.ts';
+import { type Clock, type Session, type Usage, zeroUsage, recordReq } from './session.ts';
 
-export interface CodexState { prev: Usage; unpricedCount: number }
-export const newCodexState = (): CodexState => ({ prev: zeroUsage(), unpricedCount: 0 });
+export interface CodexState { prev: Usage; unpricedCount: number; lastEnd: number }
+export const newCodexState = (): CodexState => ({ prev: zeroUsage(), unpricedCount: 0, lastEnd: 0 });
 
 function toUsage(t: any): Usage {
   const cached = t.cached_input_tokens ?? 0;
@@ -25,9 +25,17 @@ function toUsage(t: any): Usage {
   };
 }
 
-export function codexLine(s: Session, st: CodexState, d: any): void {
+// Lines that carry a request's input: the response that follows starts here.
+const INPUT_ITEMS = new Set(['function_call_output', 'custom_tool_call_output', 'local_shell_call_output']);
+
+export function codexLine(s: Session, st: CodexState, d: any, clock: Clock = { lastInput: 0 }): void {
   const p = d.payload;
   if (!p) return;
+  const ts = Date.parse(d.timestamp) || 0;
+  if (d.type === 'response_item' && (INPUT_ITEMS.has(p.type) || (p.type === 'message' && p.role === 'user'))) {
+    if (ts) clock.lastInput = ts;
+    return;
+  }
   if (d.type === 'session_meta') {
     if (p.cwd) s.project = basename(p.cwd);
     if (p.creator_account_id) s.account = p.creator_account_id;
@@ -61,9 +69,11 @@ export function codexLine(s: Session, st: CodexState, d: any): void {
 
   const last = p.info.last_token_usage;
   if (last) s.ctxTokens = (last.input_tokens ?? 0) + (last.output_tokens ?? 0);
-  const ts = Date.parse(d.timestamp) || 0;
   if (ts) {
     s.lastEvent = Math.max(s.lastEvent, ts);
-    recordSample(s, ts);
+    // In flight from the latest input (or the previous response, for back-to-back calls).
+    const start = Math.max(clock.lastInput, st.lastEnd);
+    if (start && !backwards) recordReq(s, { start, end: ts, out: delta.output });
+    st.lastEnd = ts;
   }
 }

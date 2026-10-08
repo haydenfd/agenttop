@@ -7,11 +7,11 @@
 
 import { basename } from 'node:path';
 import { cost, contextWindow } from './pricing.ts';
-import { type Session, type Usage, addUsage, recordSample } from './session.ts';
+import { type Clock, type Req, type Session, type Usage, addUsage, recordReq } from './session.ts';
 
-interface Req { usage: Usage; cost: number | null }
+interface Entry { usage: Usage; cost: number | null; req: Req | null }
 
-export interface ClaudeState { reqs: Map<string, Req>; unpricedCount: number }
+export interface ClaudeState { reqs: Map<string, Entry>; unpricedCount: number }
 export const newClaudeState = (): ClaudeState => ({ reqs: new Map(), unpricedCount: 0 });
 
 function toUsage(u: any): Usage {
@@ -29,8 +29,11 @@ function toUsage(u: any): Usage {
 }
 
 // `sub` = line came from a subagent file; it counts toward totals but not main context.
-export function claudeLine(s: Session, st: ClaudeState, d: any, sub = false): void {
+export function claudeLine(s: Session, st: ClaudeState, d: any, sub = false, clock: Clock = { lastInput: 0 }): void {
   if (!s.project && d.cwd) s.project = basename(d.cwd);
+  const ts = Date.parse(d.timestamp) || 0;
+  // Prompts and tool results are both "user" lines: each one starts the next request.
+  if (d.type === 'user') { if (ts && !d.isSidechain) clock.lastInput = ts; return; }
   const m = d.message;
   if (d.type !== 'assistant' || !m?.usage) return;
   if (!m.model || m.model === '<synthetic>') return; // local placeholder, not an API call
@@ -44,20 +47,22 @@ export function claudeLine(s: Session, st: ClaudeState, d: any, sub = false): vo
     addUsage(s.usage, prev.usage, -1);
     if (prev.cost === null) st.unpricedCount--; else s.cost -= prev.cost;
   }
-  st.reqs.set(key, { usage, cost: c });
+  // Streaming writes one line per content block; the last line marks the end of the response.
+  let req = prev?.req ?? null;
+  if (req) { req.end = Math.max(req.end, ts); req.out = usage.output; }
+  else if (ts && clock.lastInput && !d.isSidechain) {
+    req = { start: clock.lastInput, end: ts, out: usage.output };
+    recordReq(s, req);
+  }
+  st.reqs.set(key, { usage, cost: c, req });
   addUsage(s.usage, usage);
   if (c === null) st.unpricedCount++; else s.cost += c;
   s.unpriced = st.unpricedCount > 0;
 
-  const ts = Date.parse(d.timestamp) || 0;
   if (!sub && !d.isSidechain) {
     s.model = m.model;
     s.ctxTokens = usage.input + usage.cacheRead + usage.cacheWrite5m + usage.cacheWrite1h;
     s.ctxWindow = contextWindow(m.model);
   }
-  if (ts) {
-    s.lastEvent = Math.max(s.lastEvent, ts);
-    if (!prev) recordSample(s, ts);
-    else if (s.samples.length) s.samples[s.samples.length - 1][1] = s.usage.output;
-  }
+  if (ts) s.lastEvent = Math.max(s.lastEvent, ts);
 }

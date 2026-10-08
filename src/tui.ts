@@ -1,6 +1,6 @@
 // Full-screen terminal UI with plain ANSI escapes (no dependencies).
 
-import { type Session, effectiveTps } from './session.ts';
+import { type Session, tps } from './session.ts';
 import type { SourceWatcher } from './watcher.ts';
 
 const ESC = '\x1b[';
@@ -40,7 +40,7 @@ const totalTokens = (s: Session) =>
 const fmtCost = (s: Session) => (s.unpriced || !s.lastEvent ? 'N/A' : `$${s.cost.toFixed(2)}`);
 const fmtCtx = (s: Session) =>
   s.ctxTokens === null || !s.ctxWindow ? NA : `${Math.round((100 * s.ctxTokens) / s.ctxWindow)}%`;
-const fmtTps = (s: Session) => { const t = effectiveTps(s); return t === null ? NA : t.toFixed(1); };
+const fmtTps = (s: Session) => { const t = tps(s); return t === null ? NA : t.toFixed(1); };
 
 interface Col { title: string; width: number; right?: boolean; prio: number; get: (s: Session, now: number) => string }
 // prio: lower = more important; columns with the highest prio are dropped first on narrow terminals.
@@ -54,7 +54,7 @@ const COLS: Col[] = [
   { title: 'CACHED', width: 7, right: true, prio: 7, get: (s) => fmtTokens(s.usage.cacheRead) },
   { title: 'OUT', width: 7, right: true, prio: 6, get: (s) => fmtTokens(s.usage.output) },
   { title: 'CTX', width: 5, right: true, prio: 2, get: fmtCtx },
-  { title: 'eTPS', width: 6, right: true, prio: 2, get: fmtTps },
+  { title: 'TPS', width: 6, right: true, prio: 2, get: fmtTps },
   { title: 'COST', width: 8, right: true, prio: 0, get: fmtCost },
   { title: 'LAST', width: 5, right: true, prio: 4, get: (s, now) => fmtAge(now - s.lastActive) },
 ];
@@ -146,7 +146,7 @@ export class Tui {
     while (lines.length < height - footer - detailLines.length) lines.push('');
     lines.push(...detailLines);
     lines.push('');
-    lines.push(c.dim(fit('↑↓/jk navigate · PgUp/PgDn · Enter details · q/Esc/Ctrl+C exit · eTPS = output tok/s over recent activity (not decode speed)', width)));
+    lines.push(c.dim(fit('↑↓/jk navigate · PgUp/PgDn · Enter details · q/Esc/Ctrl+C exit · TPS = output tok/s while requests are in flight (last 5)', width)));
 
     this.out.write(`${ESC}H` + lines.slice(0, height).map((l) => l + `${ESC}K`).join('\r\n') + `${ESC}J`);
   }
@@ -159,7 +159,7 @@ export class Tui {
       `input ${fmtTokens(u.input)}  cache read ${fmtTokens(u.cacheRead)}  cache write ${fmtTokens(u.cacheWrite5m + u.cacheWrite1h)}  ` +
         `output ${fmtTokens(u.output)}  reasoning ${u.reasoning ? fmtTokens(u.reasoning) : NA}`,
       `context ${s.ctxTokens === null ? NA : fmtTokens(s.ctxTokens)} / ${s.ctxWindow ? fmtTokens(s.ctxWindow) : NA}  ` +
-        `effective TPS ${fmtTps(s)}  generation TPS N/A (logs carry no decode timing)  cost ${fmtCost(s)}`,
+        `TPS ${fmtTps(s)} (last ${s.reqs.length} requests, includes prompt processing)  cost ${fmtCost(s)}`,
     ];
   }
 }

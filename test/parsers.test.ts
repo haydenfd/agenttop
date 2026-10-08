@@ -7,7 +7,7 @@ import { claudeLine, newClaudeState } from '../src/claude.ts';
 import { codexLine, newCodexState } from '../src/codex.ts';
 import { parseConfig } from '../src/config.ts';
 import { cost } from '../src/pricing.ts';
-import { effectiveTps, newSession } from '../src/session.ts';
+import { newSession, tps } from '../src/session.ts';
 import { SourceWatcher } from '../src/watcher.ts';
 
 const claudeMsg = (id: string, ts: string, usage: object, extra: object = {}) => ({
@@ -73,7 +73,6 @@ test('codex: cumulative totals, repeats ignored, cached subtracted from input', 
   assert.equal(s.ctxTokens, 31586 + 85);
   assert.equal(s.ctxWindow, 475000);
   assert.equal(s.unpriced, true); // gpt-test has no price
-  assert.equal(s.samples.length, 2);
 });
 
 test('pricing: missing model is null, never 0', () => {
@@ -81,14 +80,34 @@ test('pricing: missing model is null, never 0', () => {
   assert.equal(cost('claude-haiku-4-5-20251001', { input: 1e6, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, output: 0, reasoning: 0 }), 1);
 });
 
-test('effective TPS skips idle gaps, N/A when too little data', () => {
-  const s = newSession('a', 'x', 'codex');
-  assert.equal(effectiveTps(s), null);
-  // the 10-minute gap before the last event is idle time and is skipped
-  s.samples = [[0, 0], [20_000, 1000], [50_000, 1600], [650_000, 1700]];
-  assert.equal(effectiveTps(s), 1600 / 50);
-  s.samples = [[0, 0], [600_000, 100]];
-  assert.equal(effectiveTps(s), null);
+test('claude TPS: timed from tool result / prompt to the last streamed line, tool time excluded', () => {
+  const s = newSession('a', 'claude', 'claude');
+  const st = newClaudeState();
+  const clock = { lastInput: 0 };
+  const user = (ts: string) => ({ type: 'user', timestamp: ts });
+  claudeLine(s, st, user('2026-10-08T00:00:00Z'), false, clock);
+  claudeLine(s, st, claudeMsg('m1', '2026-10-08T00:00:02Z', { output_tokens: 100 }), false, clock);
+  claudeLine(s, st, claudeMsg('m1', '2026-10-08T00:00:04Z', { output_tokens: 100 }), false, clock); // same msg, later block
+  // 60s of tool execution happens here; it belongs to no request
+  claudeLine(s, st, user('2026-10-08T00:01:04Z'), false, clock);
+  claudeLine(s, st, claudeMsg('m2', '2026-10-08T00:01:10Z', { output_tokens: 200 }), false, clock);
+  assert.equal(s.reqs.length, 2);
+  assert.equal(tps(s), 300 / 10); // (100 + 200) tokens / (4s + 6s)
+});
+
+test('codex TPS: timed from tool output to token_count', () => {
+  const s = newSession('c', 'codex', 'codex');
+  const st = newCodexState();
+  const clock = { lastInput: 0 };
+  const item = (ts: string, type: string) => ({ timestamp: ts, type: 'response_item', payload: { type, role: 'user' } });
+  codexLine(s, st, item('2026-10-08T00:00:00Z', 'message'), clock);
+  codexLine(s, st, tc('2026-10-08T00:00:05Z', { input_tokens: 10, output_tokens: 100 }), clock);
+  codexLine(s, st, item('2026-10-08T00:02:00Z', 'function_call_output'), clock); // after 115s of tool time
+  codexLine(s, st, tc('2026-10-08T00:02:05Z', { input_tokens: 20, output_tokens: 300 }), clock);
+  codexLine(s, st, tc('2026-10-08T00:02:06Z', { input_tokens: 20, output_tokens: 300 }), clock); // repeat: no request
+  assert.equal(s.reqs.length, 2);
+  assert.equal(tps(s), 300 / 10);
+  assert.equal(tps(newSession('x', 'x', 'codex')), null);
 });
 
 test('config: parses sources, expands ~, rejects bad provider', () => {

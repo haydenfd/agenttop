@@ -7,10 +7,10 @@ import { basename, join } from 'node:path';
 import { type ClaudeState, claudeLine, newClaudeState } from './claude.ts';
 import { type CodexState, codexLine, newCodexState } from './codex.ts';
 import type { SourceConfig } from './config.ts';
-import { type Session, newSession } from './session.ts';
+import { type Clock, type Session, newSession } from './session.ts';
 
 interface Entry { session: Session; state: ClaudeState | CodexState; files: string[] }
-interface FileState { key: string; sub: boolean; offset: number; partial: Buffer | null; mtime: number }
+interface FileState { key: string; sub: boolean; offset: number; partial: Buffer | null; mtime: number; clock: Clock }
 
 const CHUNK = 4 << 20;
 
@@ -63,7 +63,7 @@ export class SourceWatcher {
       let mtime: number;
       try { mtime = statSync(path).mtimeMs; } catch { continue; }
       if (now - mtime > this.maxAgeMs) continue;
-      this.files.set(path, { key, sub, offset: 0, partial: null, mtime });
+      this.files.set(path, { key, sub, offset: 0, partial: null, mtime, clock: { lastInput: 0 } });
       let e = this.sessions.get(key);
       if (!e) {
         const id = provider === 'claude' ? basename(key) : codexId(key);
@@ -97,7 +97,7 @@ export class SourceWatcher {
     const s = e.session;
     e.session = newSession(s.id, s.source, s.provider);
     e.state = s.provider === 'claude' ? newClaudeState() : newCodexState();
-    for (const p of e.files) { const f = this.files.get(p)!; f.offset = 0; f.partial = null; }
+    for (const p of e.files) { const f = this.files.get(p)!; f.offset = 0; f.partial = null; f.clock = { lastInput: 0 }; }
   }
 
   private read(path: string, f: FileState, e: Entry, size: number): void {
@@ -127,14 +127,14 @@ export class SourceWatcher {
   private line(text: string, f: FileState, e: Entry): void {
     // Skip JSON.parse for lines that cannot matter (most of a log is message content).
     if (e.session.provider === 'claude') {
-      if (!text.includes('"usage"') && (e.session.project || !text.includes('"cwd"'))) return;
-    } else if (!text.includes('"token_count"') && !text.includes('"turn_context"') && !text.includes('"session_meta"')) {
+      if (!text.includes('"usage"') && !text.includes('"type":"user"') && (e.session.project || !text.includes('"cwd"'))) return;
+    } else if (!/"(token_count|turn_context|session_meta|function_call_output|custom_tool_call_output|local_shell_call_output)"|"role":"user"/.test(text)) {
       return;
     }
     let d: any;
     try { d = JSON.parse(text); } catch { return; }
-    if (e.session.provider === 'claude') claudeLine(e.session, e.state as ClaudeState, d, f.sub);
-    else codexLine(e.session, e.state as CodexState, d);
+    if (e.session.provider === 'claude') claudeLine(e.session, e.state as ClaudeState, d, f.sub, f.clock);
+    else codexLine(e.session, e.state as CodexState, d, f.clock);
   }
 
   list(): Session[] {
