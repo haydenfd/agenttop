@@ -164,14 +164,13 @@ test('watcher: codex homes sharing a sessions dir are split by account id', () =
   assert.deepEqual(w.list().map((s) => s.id), ['aaa']);
 });
 
-test('claude: branch from gitBranch, user-set title beats auto title', () => {
+test('claude: user-set title beats auto title', () => {
   const s = newSession('a', 'claude', 'claude');
   const st = newClaudeState();
   claudeLine(s, st, { type: 'custom-title', customTitle: 'my-name' });
   claudeLine(s, st, { type: 'ai-title', aiTitle: 'Auto name' });
-  claudeLine(s, st, { ...claudeMsg('m1', '2026-10-08T00:00:00Z', u2), gitBranch: 'feature-x' });
+  claudeLine(s, st, claudeMsg('m1', '2026-10-08T00:00:00Z', u2));
   assert.equal(s.title, 'my-name');
-  assert.equal(s.branch, 'feature-x');
 });
 
 test('codex cost: priced per response record, long-prompt tier per request, totals still from token_count', () => {

@@ -38,9 +38,8 @@ interface Col { title: string; width: number; right?: boolean; prio: number; get
 // prio: lower = more important; columns with the highest prio are dropped first on narrow terminals.
 const COLS: Col[] = [
   { title: 'ACCOUNT', width: 14, prio: 0, get: (s) => s.source },
-  { title: 'SESSION', width: 26, prio: 1, get: (s) => s.title || s.id.slice(0, 8) },
+  { title: 'SESSION', width: 32, prio: 1, get: (s) => s.title || s.id.slice(0, 8) },
   { title: 'PROJECT', width: 14, prio: 4, get: (s) => s.project || NA },
-  { title: 'BRANCH', width: 18, prio: 3, get: (s) => s.branch || NA },
   { title: 'MODEL', width: 18, prio: 5, get: (s) => s.model ?? NA },
   { title: 'TOKENS', width: 7, right: true, prio: 0, get: (s) => fmtTokens(totalTokens(s)) },
   { title: 'IN', width: 7, right: true, prio: 7, get: (s) => fmtTokens(s.usage.input) },
@@ -146,7 +145,7 @@ export class Tui {
     const u = s.usage;
     return [
       c.dim('─'.repeat(Math.min(this.out.columns || 80, 100))),
-      `${c.bold(s.source)} · ${s.title || NA} · ${s.project || NA}@${s.branch || NA} · ${s.model ?? NA} · session ${s.id}`,
+      `${c.bold(s.source)} · ${s.title || NA} · ${s.project || NA} · ${s.model ?? NA} · session ${s.id}`,
       `input ${fmtTokens(u.input)}  cache read ${fmtTokens(u.cacheRead)}  cache write ${fmtTokens(u.cacheWrite5m + u.cacheWrite1h)}  ` +
         `output ${fmtTokens(u.output)}  reasoning ${u.reasoning ? fmtTokens(u.reasoning) : NA}`,
       `context ${s.ctxTokens === null ? NA : fmtTokens(s.ctxTokens)} / ${s.ctxWindow ? fmtTokens(s.ctxWindow) : NA}  ` +

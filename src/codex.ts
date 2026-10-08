@@ -38,7 +38,6 @@ export function codexLine(s: Session, st: CodexState, d: any, clock: Clock = { l
   }
   if (d.type === 'session_meta') {
     if (p.cwd) s.project = basename(p.cwd);
-    if (p.git?.branch) s.branch = p.git.branch;
     if (p.creator_account_id) s.account = p.creator_account_id;
     return;
   }

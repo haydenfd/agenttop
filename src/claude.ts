@@ -31,7 +31,6 @@ function toUsage(u: any): Usage {
 // `sub` = line came from a subagent file; it counts toward totals but not main context.
 export function claudeLine(s: Session, st: ClaudeState, d: any, sub = false, clock: Clock = { lastInput: 0 }): void {
   if (!s.project && d.cwd) s.project = basename(d.cwd);
-  if (!sub && d.gitBranch) s.branch = d.gitBranch;
   // A name you set (/rename) wins over the auto-generated one.
   if (d.type === 'custom-title' && d.customTitle) { s.title = d.customTitle; st.customTitle = true; return; }
   if (d.type === 'ai-title' && d.aiTitle) { if (!st.customTitle) s.title = d.aiTitle; return; }
