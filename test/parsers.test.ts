@@ -95,18 +95,22 @@ test('claude TPS: timed from tool result / prompt to the last streamed line, too
   assert.equal(tps(s), 300 / 10); // (100 + 200) tokens / (4s + 6s)
 });
 
-test('codex TPS: timed from tool output to token_count', () => {
+test('codex TPS: timed from input to token_usage_record, not the lagging token_count', () => {
   const s = newSession('c', 'codex', 'codex');
   const st = newCodexState();
   const clock = { lastInput: 0 };
   const item = (ts: string, type: string) => ({ timestamp: ts, type: 'response_item', payload: { type, role: 'user' } });
+  const rec = (ts: string, id: string, out: number) =>
+    ({ timestamp: ts, type: 'token_usage_record', payload: { response_id: id, usage: { output_tokens: out } } });
   codexLine(s, st, item('2026-10-08T00:00:00Z', 'message'), clock);
-  codexLine(s, st, tc('2026-10-08T00:00:05Z', { input_tokens: 10, output_tokens: 100 }), clock);
-  codexLine(s, st, item('2026-10-08T00:02:00Z', 'function_call_output'), clock); // after 115s of tool time
-  codexLine(s, st, tc('2026-10-08T00:02:05Z', { input_tokens: 20, output_tokens: 300 }), clock);
-  codexLine(s, st, tc('2026-10-08T00:02:06Z', { input_tokens: 20, output_tokens: 300 }), clock); // repeat: no request
+  codexLine(s, st, rec('2026-10-08T00:00:04Z', 'r1', 100), clock);
+  codexLine(s, st, rec('2026-10-08T00:00:04Z', 'r1', 100), clock); // duplicate record
+  // tool runs 60s; token_count for r1 is only written after it finishes
+  codexLine(s, st, item('2026-10-08T00:01:04Z', 'custom_tool_call_output'), clock);
+  codexLine(s, st, tc('2026-10-08T00:01:04Z', { input_tokens: 10, output_tokens: 100 }), clock);
+  codexLine(s, st, rec('2026-10-08T00:01:10Z', 'r2', 200), clock);
   assert.equal(s.reqs.length, 2);
-  assert.equal(tps(s), 300 / 10);
+  assert.equal(tps(s), 300 / 10); // (100 + 200) / (4s + 6s)
   assert.equal(tps(newSession('x', 'x', 'codex')), null);
 });
 

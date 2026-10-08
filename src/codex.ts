@@ -9,8 +9,8 @@ import { basename } from 'node:path';
 import { cost } from './pricing.ts';
 import { type Clock, type Session, type Usage, zeroUsage, recordReq } from './session.ts';
 
-export interface CodexState { prev: Usage; unpricedCount: number; lastEnd: number }
-export const newCodexState = (): CodexState => ({ prev: zeroUsage(), unpricedCount: 0, lastEnd: 0 });
+export interface CodexState { prev: Usage; unpricedCount: number; lastEnd: number; responses: Set<string> }
+export const newCodexState = (): CodexState => ({ prev: zeroUsage(), unpricedCount: 0, lastEnd: 0, responses: new Set() });
 
 function toUsage(t: any): Usage {
   const cached = t.cached_input_tokens ?? 0;
@@ -42,6 +42,17 @@ export function codexLine(s: Session, st: CodexState, d: any, clock: Clock = { l
     if (p.creator_account_id) s.account = p.creator_account_id;
     return;
   }
+  // Written the moment a response completes, with that response's own usage. (token_count
+  // can lag behind it by the whole tool run, so it is only used for totals, not timing.)
+  if (d.type === 'token_usage_record') {
+    const id = p.response_id;
+    if (!id || st.responses.has(id) || !ts) return;
+    st.responses.add(id);
+    const start = Math.max(clock.lastInput, st.lastEnd);
+    if (start) recordReq(s, { start, end: ts, out: p.usage?.output_tokens ?? 0 });
+    st.lastEnd = ts;
+    return;
+  }
   if (d.type === 'turn_context') {
     if (p.model) s.model = p.model;
     return;
@@ -70,11 +81,5 @@ export function codexLine(s: Session, st: CodexState, d: any, clock: Clock = { l
 
   const last = p.info.last_token_usage;
   if (last) s.ctxTokens = (last.input_tokens ?? 0) + (last.output_tokens ?? 0);
-  if (ts) {
-    s.lastEvent = Math.max(s.lastEvent, ts);
-    // In flight from the latest input (or the previous response, for back-to-back calls).
-    const start = Math.max(clock.lastInput, st.lastEnd);
-    if (start && !backwards) recordReq(s, { start, end: ts, out: delta.output });
-    st.lastEnd = ts;
-  }
+  if (ts) s.lastEvent = Math.max(s.lastEvent, ts);
 }

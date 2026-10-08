@@ -52,7 +52,7 @@ Prices: Claude models are built in. Add or override any model in
 | BRANCH | git branch the session is on |
 | TOKENS | input + cache read + cache write + output, deduplicated |
 | CTX | tokens in context at the latest request ÷ model context window |
-| TPS | output tokens ÷ seconds the last 5 API requests were in flight. A request runs from when its input (your prompt or a tool result) was logged to when its response finished logging, so tool execution and idle time are excluded. It still includes prompt processing and time to first token, so it reads a bit below pure decode speed. `--` when there is not enough data |
+| TPS | output tokens ÷ seconds in flight, summed over every API request in the session. A request runs from when its input (your prompt or a tool result) was logged to when its response finished logging, so tool execution and idle time are excluded. It still includes prompt processing and time to first token, so it reads a bit below pure decode speed. `--` when there is not enough data |
 | COST | API-equivalent USD; `N/A` if any request's model has no price |
 
 
@@ -69,6 +69,7 @@ Prices: Claude models are built in. Add or override any model in
 - `<synthetic>` placeholder messages are ignored.
 
 **Codex**: `<home>/sessions/YYYY/MM/DD/rollout-*.jsonl`
+- Request timing uses `token_usage_record`, written the moment each response completes (deduplicated by `response_id`). `token_count` can lag by a whole tool run, so it is not used for timing.
 - `token_count` events carry `total_token_usage`, a running total kept by Codex. The latest
   total is the session total. Repeated events with the same total are ignored, and each
   increase is priced with the model active at that point (`turn_context.model`).

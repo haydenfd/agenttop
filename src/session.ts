@@ -34,7 +34,7 @@ export interface Session {
   unpriced: boolean;         // true if any request's model had no price -> show N/A
   lastEvent: number;         // ms epoch of latest usage-bearing event
   lastActive: number;        // ms epoch of latest log file write (drives status + sort)
-  reqs: Req[];               // most recent API requests, for TPS
+  reqs: Req[];               // every API request in the session, for TPS
 }
 
 export function newSession(id: string, source: string, provider: Provider): Session {
@@ -52,14 +52,11 @@ export interface Req { start: number; end: number; out: number }
 // Per-log-file timing state: when the latest request input was logged.
 export interface Clock { lastInput: number }
 
-const MAX_REQS = 5;
-
 export function recordReq(s: Session, r: Req): void {
   s.reqs.push(r);
-  if (s.reqs.length > MAX_REQS) s.reqs.shift();
 }
 
-// TPS over the last few requests: total output tokens / total in-flight seconds.
+// Session TPS: total output tokens / total in-flight seconds across every request.
 // Includes prompt processing and time-to-first-token, which the logs cannot separate out.
 export function tps(s: Session): number | null {
   let out = 0, ms = 0;

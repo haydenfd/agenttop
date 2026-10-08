@@ -137,7 +137,7 @@ export class Tui {
     while (lines.length < height - footer - detailLines.length) lines.push('');
     lines.push(...detailLines);
     lines.push('');
-    lines.push(c.dim(fit('↑↓/jk navigate · PgUp/PgDn · Enter details · q/Esc/Ctrl+C exit · TPS = output tok/s while requests are in flight (last 5)', width)));
+    lines.push(c.dim(fit('↑↓/jk navigate · PgUp/PgDn · Enter details · q/Esc/Ctrl+C exit · TPS = session output tok/s while requests are in flight', width)));
 
     this.out.write(`${ESC}H` + lines.slice(0, height).map((l) => l + `${ESC}K`).join('\r\n') + `${ESC}J`);
   }
@@ -150,7 +150,7 @@ export class Tui {
       `input ${fmtTokens(u.input)}  cache read ${fmtTokens(u.cacheRead)}  cache write ${fmtTokens(u.cacheWrite5m + u.cacheWrite1h)}  ` +
         `output ${fmtTokens(u.output)}  reasoning ${u.reasoning ? fmtTokens(u.reasoning) : NA}`,
       `context ${s.ctxTokens === null ? NA : fmtTokens(s.ctxTokens)} / ${s.ctxWindow ? fmtTokens(s.ctxWindow) : NA}  ` +
-        `TPS ${fmtTps(s)} (last ${s.reqs.length} requests, includes prompt processing)  cost ${fmtCost(s)}`,
+        `TPS ${fmtTps(s)} (over ${s.reqs.length} requests, includes prompt processing)  cost ${fmtCost(s)}`,
     ];
   }
 }
