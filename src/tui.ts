@@ -10,7 +10,8 @@ const c = {
   inv: (s: string) => `${ESC}7m${s}${ESC}27m`,
   fg: (n: number, s: string) => `${ESC}38;5;${n}m${s}${ESC}39m`,
 };
-const PROVIDER_COLOR = { codex: 39, claude: 209 } as const; // blue, orange
+// One-cell stand-ins for the logos: ✻ is the glyph Claude Code itself uses; ❂ for the OpenAI knot.
+const PROVIDER_ICON = { codex: [255, '❂'], claude: [209, '✻'] } as const; // white, orange
 const NA = '--';
 
 export function fmtTokens(n: number): string {
@@ -127,7 +128,7 @@ export class Tui {
         if (text.trim() === NA || text.trim() === 'N/A') return c.dim(text);
         return text;
       });
-      const dot = c.fg(PROVIDER_COLOR[s.provider], '●');
+      const dot = c.fg(...PROVIDER_ICON[s.provider]);
       const row = `${dot} ${cells.join(' ')}`;
       lines.push(this.key(s) === this.selKey ? c.inv(row) : row);
     }
