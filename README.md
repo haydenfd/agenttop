@@ -34,7 +34,7 @@ provider = "claude"
 home = "~/.claude"
 ```
 
-Prices: Claude models are built in. Add or override any model in
+Prices: Claude models and `gpt-6.1-sol` are built in ($2 in / $0.10 cached / $10 out per 1M, and 2× input / 1.5× output for requests with prompts over 272K tokens; that tier is from third-party guides). Add or override any model in
 `~/.config/agenttop/pricing.json` (USD per 1M tokens; `context` optional):
 
 ```json
@@ -70,6 +70,7 @@ Prices: Claude models are built in. Add or override any model in
 
 **Codex**: `<home>/sessions/YYYY/MM/DD/rollout-*.jsonl`
 - Request timing uses `token_usage_record`, written the moment each response completes (deduplicated by `response_id`). `token_count` can lag by a whole tool run, so it is not used for timing.
+- Cost is computed per response from `token_usage_record`, so the long-prompt tier applies to each request. These records add up exactly to Codex's own `token_count` totals.
 - `token_count` events carry `total_token_usage`, a running total kept by Codex. The latest
   total is the session total. Repeated events with the same total are ignored, and each
   increase is priced with the model active at that point (`turn_context.model`).

@@ -48,6 +48,10 @@ export function codexLine(s: Session, st: CodexState, d: any, clock: Clock = { l
     const id = p.response_id;
     if (!id || st.responses.has(id) || !ts) return;
     st.responses.add(id);
+    // Price each response on its own, so the long-prompt tier applies per request.
+    const c = cost(s.model, toUsage(p.usage ?? {}));
+    if (c === null) st.unpricedCount++; else s.cost += c;
+    s.unpriced = st.unpricedCount > 0;
     const start = Math.max(clock.lastInput, st.lastEnd);
     if (start) recordReq(s, { start, end: ts, out: p.usage?.output_tokens ?? 0 });
     st.lastEnd = ts;
@@ -71,7 +75,8 @@ export function codexLine(s: Session, st: CodexState, d: any, clock: Clock = { l
   // Counter went backwards (should not happen): resync without pricing negative usage.
   const backwards = Object.values(delta).some((v) => v < 0);
 
-  if (!backwards) {
+  // Older Codex logs have no token_usage_record: fall back to pricing the change in totals.
+  if (!backwards && !st.responses.size) {
     const c = cost(s.model, delta);
     if (c === null) st.unpricedCount++; else s.cost += c;
     s.unpriced = st.unpricedCount > 0;

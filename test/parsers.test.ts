@@ -173,3 +173,25 @@ test('claude: branch from gitBranch, user-set title beats auto title', () => {
   assert.equal(s.title, 'my-name');
   assert.equal(s.branch, 'feature-x');
 });
+
+test('codex cost: priced per response record, long-prompt tier per request, totals still from token_count', () => {
+  const s = newSession('c', 'codex', 'codex');
+  const st = newCodexState();
+  codexLine(s, st, { type: 'turn_context', payload: { model: 'gpt-6.1-sol' } });
+  const rec = (id: string, usage: object) =>
+    ({ timestamp: '2026-10-08T00:00:01Z', type: 'token_usage_record', payload: { response_id: id, usage } });
+  // small request: 1000 input of which 800 cached, 100 output
+  codexLine(s, st, rec('r1', { input_tokens: 1000, cached_input_tokens: 800, output_tokens: 100 }));
+  codexLine(s, st, rec('r1', { input_tokens: 1000, cached_input_tokens: 800, output_tokens: 100 })); // duplicate
+  const small = (200 * 2 + 800 * 0.1 + 100 * 10) / 1e6;
+  assert.ok(Math.abs(s.cost - small) < 1e-12);
+  // 300K-token prompt crosses 272K: 2x input/cache, 1.5x output
+  codexLine(s, st, rec('r2', { input_tokens: 300_000, cached_input_tokens: 290_000, output_tokens: 1000 }));
+  const big = (2 * (10_000 * 2 + 290_000 * 0.1) + 1.5 * 1000 * 10) / 1e6;
+  assert.ok(Math.abs(s.cost - small - big) < 1e-12);
+  // token_count totals don't add cost again when records exist
+  codexLine(s, st, tc('2026-10-08T00:00:02Z', { input_tokens: 301_000, cached_input_tokens: 290_800, output_tokens: 1100 }));
+  assert.ok(Math.abs(s.cost - small - big) < 1e-12);
+  assert.equal(s.usage.output, 1100);
+  assert.equal(s.unpriced, false);
+});

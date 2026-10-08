@@ -9,12 +9,16 @@ export interface Price {
   cacheWrite5m?: number;
   cacheWrite1h?: number;
   context?: number; // context window in tokens
+  // Requests whose prompt (input incl. cached) exceeds `above` are billed at higher rates.
+  long?: { above: number; input: number; output: number }; // multipliers
 }
 
 // Anthropic first-party API list prices (cached 2026-10-06).
 // ponytail: Haiku 5.5's >100K-prompt tier ($0.50/$2.50) is not modeled.
-// Codex/OpenAI models are not built in; add them in ~/.config/agenttop/pricing.json.
+// OpenAI: standard rates from OpenAI's GPT-6.1 Sol announcement. The cache-write rate and
+// the >272K long-prompt tier come from third-party guides; override in pricing.json if wrong.
 const BUILTIN: Record<string, Price> = {
+  'gpt-6.1-sol': { input: 2, output: 10, cacheRead: 0.1, cacheWrite5m: 2.5, long: { above: 272_000, input: 2, output: 1.5 } },
   'claude-fable-5-1': { input: 10, output: 50, cacheRead: 0.25, context: 1_000_000 },
   'claude-fable-5': { input: 10, output: 50, context: 1_000_000 },
   'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.2, context: 1_000_000 },
@@ -50,15 +54,20 @@ export function contextWindow(model: string): number | null {
   return lookup(model)?.context ?? null;
 }
 
-// Returns null when the model has no price: callers must show N/A, never $0.
+// Prices ONE request (the long-prompt tier depends on request size). Returns null when the
+// model has no price: callers must show N/A, never $0.
 export function cost(model: string | null, u: Usage): number | null {
   const p = model ? lookup(model) : undefined;
   if (!p) return null;
+  const prompt = u.input + u.cacheRead + u.cacheWrite5m + u.cacheWrite1h;
+  const long = p.long && prompt > p.long.above;
+  const im = long ? p.long!.input : 1;
+  const om = long ? p.long!.output : 1;
   return (
-    u.input * p.input +
-    u.output * p.output +
-    u.cacheRead * (p.cacheRead ?? p.input * 0.1) +
-    u.cacheWrite5m * (p.cacheWrite5m ?? p.input * 1.25) +
-    u.cacheWrite1h * (p.cacheWrite1h ?? p.input * 2)
+    im * (u.input * p.input +
+      u.cacheRead * (p.cacheRead ?? p.input * 0.1) +
+      u.cacheWrite5m * (p.cacheWrite5m ?? p.input * 1.25) +
+      u.cacheWrite1h * (p.cacheWrite1h ?? p.input * 2)) +
+    om * u.output * p.output
   ) / 1e6;
 }
