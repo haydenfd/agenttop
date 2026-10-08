@@ -81,11 +81,14 @@ test('pricing: missing model is null, never 0', () => {
   assert.equal(cost('claude-haiku-4-5-20251001', { input: 1e6, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, output: 0, reasoning: 0 }), 1);
 });
 
-test('effective TPS uses last 60s of samples, N/A when too short', () => {
+test('effective TPS skips idle gaps, N/A when too little data', () => {
   const s = newSession('a', 'x', 'codex');
   assert.equal(effectiveTps(s), null);
-  s.samples = [[0, 0], [100_000, 1000], [110_000, 1500], [130_000, 2500]];
-  assert.equal(effectiveTps(s), (2500 - 1000) / 30); // window starts at the 100s sample
+  // the 10-minute gap before the last event is idle time and is skipped
+  s.samples = [[0, 0], [20_000, 1000], [50_000, 1600], [650_000, 1700]];
+  assert.equal(effectiveTps(s), 1600 / 50);
+  s.samples = [[0, 0], [600_000, 100]];
+  assert.equal(effectiveTps(s), null);
 });
 
 test('config: parses sources, expands ~, rejects bad provider', () => {

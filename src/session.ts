@@ -47,17 +47,21 @@ export function recordSample(s: Session, ts: number): void {
   const last = s.samples[s.samples.length - 1];
   if (last && ts < last[0]) { last[1] = s.usage.output; return; } // out-of-order (subagent backfill)
   s.samples.push([ts, s.usage.output]);
-  // keep ~10 minutes of samples; effective TPS only looks at the last 60s
-  while (s.samples.length > 1 && s.samples[0][0] < ts - 600_000) s.samples.shift();
+  if (s.samples.length > MAX_SAMPLES) s.samples.shift();
 }
 
-// Effective TPS: output tokens / wall-clock seconds over the last 60s of observed activity.
-// This is NOT decoding speed: it includes tool time, prefill and idle gaps.
+const MAX_SAMPLES = 9;      // last 8 intervals between usage events
+const IDLE_GAP_MS = 120_000; // longer gaps are user/think time, not agent work
+
+// Effective TPS: output tokens / wall-clock seconds across the most recent intervals between
+// usage events, skipping idle gaps. Includes tool time and prefill, so it is NOT decoding speed.
 export function effectiveTps(s: Session): number | null {
-  if (s.samples.length < 2) return null;
-  const [tEnd, oEnd] = s.samples[s.samples.length - 1];
-  const start = s.samples.find(([t]) => t >= tEnd - 60_000)!;
-  const secs = (tEnd - start[0]) / 1000;
-  if (secs < 5) return null;
-  return (oEnd - start[1]) / secs;
+  let out = 0, ms = 0;
+  for (let i = 1; i < s.samples.length; i++) {
+    const dt = s.samples[i][0] - s.samples[i - 1][0];
+    if (dt > IDLE_GAP_MS) continue;
+    ms += dt;
+    out += s.samples[i][1] - s.samples[i - 1][1];
+  }
+  return ms < 5000 ? null : out / (ms / 1000);
 }

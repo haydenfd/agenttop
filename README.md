@@ -50,7 +50,7 @@ Prices: Claude models are built in. Add or override any model in
 | ● | blue = Codex, orange = Claude |
 | TOKENS | input + cache read + cache write + output, deduplicated |
 | CTX | tokens in context at the latest request ÷ model context window |
-| eTPS | **effective** TPS: output tokens ÷ wall-clock seconds over the last 60 s of logged activity. Includes tool time and pauses, so it is *not* decoding speed. `--` when there is not enough data |
+| eTPS | **effective** TPS: output tokens ÷ wall-clock seconds across the last 8 intervals between usage events, skipping gaps over 2 min (idle/user time). Includes tool time and prefill, so it is *not* decoding speed. `--` when under 5 s of activity is available |
 | COST | API-equivalent USD; `N/A` if any request's model has no price |
 | STATUS | active (log written < 30 s ago), idle (< 30 min), done, unknown (no usage yet) |
 

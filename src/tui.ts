@@ -146,7 +146,7 @@ export class Tui {
     while (lines.length < height - footer - detailLines.length) lines.push('');
     lines.push(...detailLines);
     lines.push('');
-    lines.push(c.dim(fit('↑↓/jk navigate · PgUp/PgDn · Enter details · q/Esc/Ctrl+C exit · eTPS = output tok/s over last 60s wall-clock', width)));
+    lines.push(c.dim(fit('↑↓/jk navigate · PgUp/PgDn · Enter details · q/Esc/Ctrl+C exit · eTPS = output tok/s over recent activity (not decode speed)', width)));
 
     this.out.write(`${ESC}H` + lines.slice(0, height).map((l) => l + `${ESC}K`).join('\r\n') + `${ESC}J`);
   }
