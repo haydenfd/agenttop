@@ -34,19 +34,20 @@ export interface Session {
   lastEvent: number;         // ms epoch of latest usage-bearing event
   lastActive: number;        // ms epoch of latest log file write (drives status + sort)
   reqs: Req[];               // every API request in the session, for TPS
+  toolCalls: number;
+  toolErrors: Record<string, number>; // "<tool>: <reason>" -> count
 }
 
 export function newSession(id: string, source: string, provider: Provider): Session {
   return {
     id, source, provider, project: '', title: '', account: null, model: null, usage: zeroUsage(),
     ctxTokens: null, ctxWindow: null, cost: 0, unpriced: false, lastEvent: 0, lastActive: 0, reqs: [],
+    toolCalls: 0, toolErrors: {},
   };
 }
 
-// One API request: output tokens and the time it was in flight, from the moment its input
-// (prompt or tool result) was logged to the moment its response was logged. Tool execution
-// and idle time fall outside every request, so they never count.
-export interface Req { start: number; end: number; out: number }
+// One API request. Codex can also report when the first model token arrived.
+export interface Req { start: number; end: number; out: number; generationStart?: number }
 
 // Per-log-file timing state: when the latest request input was logged.
 export interface Clock { lastInput: number }
@@ -55,14 +56,30 @@ export function recordReq(s: Session, r: Req): void {
   s.reqs.push(r);
 }
 
-// Session TPS: total output tokens / total in-flight seconds across every request.
-// Includes prompt processing and time-to-first-token, which the logs cannot separate out.
-export function tps(s: Session): number | null {
-  let out = 0, ms = 0;
+// Codex uses only requests with first-token timing; Claude includes prompt processing.
+export function tpsStats(s: Session): { rate: number | null; requests: number } {
+  let out = 0, ms = 0, requests = 0;
   for (const r of s.reqs) {
-    if (r.end <= r.start || r.out <= 0) continue;
+    const start = s.provider === 'codex' ? r.generationStart : r.start;
+    if (start === undefined || !Number.isFinite(start) || !Number.isFinite(r.end)
+      || r.end <= start || !Number.isFinite(r.out) || r.out <= 0) continue;
     out += r.out;
-    ms += r.end - r.start;
+    ms += r.end - start;
+    requests++;
   }
-  return ms < 500 ? null : out / (ms / 1000);
+  return { rate: ms < 500 ? null : out / (ms / 1000), requests };
+}
+
+export const tps = (s: Session): number | null => tpsStats(s).rate;
+
+export function recordToolError(s: Session, tool: string, reason: string): void {
+  const k = `${tool}: ${reason}`;
+  s.toolErrors[k] = (s.toolErrors[k] ?? 0) + 1;
+}
+
+// Shell commands are labeled by program, so `gh` failing 13 times stands out from `cat`.
+// Skips a leading `cd dir &&` and VAR=value assignments.
+export function shellLabel(tool: string, cmd: string): string {
+  const m = /^\s*(?:cd\s+\S+\s*&&\s*)?(?:\w+=\S*\s+)*([^\s;|&()]+)/.exec(cmd ?? '');
+  return m ? `${tool}(${m[1].split('/').pop()})` : tool;
 }

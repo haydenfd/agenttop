@@ -7,12 +7,25 @@
 
 import { basename } from 'node:path';
 import { cost, contextWindow } from './pricing.ts';
-import { type Clock, type Req, type Session, type Usage, addUsage, recordReq } from './session.ts';
+import { type Clock, type Req, type Session, type Usage, addUsage, recordReq, recordToolError, shellLabel } from './session.ts';
 
 interface Entry { usage: Usage; cost: number | null; req: Req | null }
 
-export interface ClaudeState { reqs: Map<string, Entry>; unpricedCount: number; customTitle: boolean }
-export const newClaudeState = (): ClaudeState => ({ reqs: new Map(), unpricedCount: 0, customTitle: false });
+// tools: tool_use id -> label, so a later error result can be attributed to its tool.
+export interface ClaudeState { reqs: Map<string, Entry>; unpricedCount: number; customTitle: boolean; tools: Map<string, string> }
+export const newClaudeState = (): ClaudeState => ({ reqs: new Map(), unpricedCount: 0, customTitle: false, tools: new Map() });
+
+// Short, groupable reason for a failed tool result.
+export function errorReason(content: any): string {
+  const text: string = typeof content === 'string' ? content
+    : Array.isArray(content) ? content.map((b: any) => b.text ?? '').join(' ') : '';
+  if (text.includes("doesn't want to proceed")) return 'rejected by user';
+  if (text.includes('auto mode classifier')) return 'denied by classifier';
+  const exit = /^Exit code (\d+)/.exec(text);
+  if (exit) return `exit ${exit[1]}`;
+  const first = text.replace(/<\/?tool_use_error>/g, '').trim().split(/\.\s|\n/)[0];
+  return first.replace(/\/\S+/g, '…').slice(0, 60) || 'error';
+}
 
 function toUsage(u: any): Usage {
   const cc = u.cache_creation;
@@ -36,15 +49,26 @@ export function claudeLine(s: Session, st: ClaudeState, d: any, sub = false, clo
   if (d.type === 'ai-title' && d.aiTitle) { if (!st.customTitle) s.title = d.aiTitle; return; }
   const ts = Date.parse(d.timestamp) || 0;
   // Prompts and tool results are both "user" lines: each one starts the next request.
-  if (d.type === 'user') { if (ts && !d.isSidechain) clock.lastInput = ts; return; }
+  if (d.type === 'user') {
+    if (ts && !d.isSidechain) clock.lastInput = ts;
+    if (Array.isArray(d.message?.content)) for (const b of d.message.content) {
+      if (b.type === 'tool_result' && b.is_error) recordToolError(s, st.tools.get(b.tool_use_id) ?? 'unknown', errorReason(b.content));
+    }
+    return;
+  }
   const m = d.message;
+  if (d.type === 'assistant' && Array.isArray(m?.content)) for (const b of m.content) {
+    if (b.type !== 'tool_use' || st.tools.has(b.id)) continue;
+    st.tools.set(b.id, b.name === 'Bash' ? shellLabel('Bash', b.input?.command) : b.name);
+    s.toolCalls++;
+  }
   if (d.type !== 'assistant' || !m?.usage) return;
   if (!m.model || m.model === '<synthetic>') return; // local placeholder, not an API call
   const key = m.id ?? d.requestId;
   if (!key) return;
 
   const usage = toUsage(m.usage);
-  const c = cost(m.model, usage);
+  const c = cost(m.model, usage, m.usage.speed === 'fast');
   const prev = st.reqs.get(key);
   if (prev) {
     addUsage(s.usage, prev.usage, -1);

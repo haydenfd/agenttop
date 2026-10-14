@@ -129,7 +129,7 @@ export class SourceWatcher {
     // Skip JSON.parse for lines that cannot matter (most of a log is message content).
     if (e.session.provider === 'claude') {
       if (!/"usage"|"type":"user"|"(custom|ai)-title"/.test(text) && (e.session.project || !text.includes('"cwd"'))) return;
-    } else if (!/"(token_count|token_usage_record|turn_context|session_meta|function_call_output|custom_tool_call_output|local_shell_call_output)"|"role":"user"/.test(text)) {
+    } else if (!/"(token_count|token_usage_record|turn_context|session_meta|task_started|task_complete|item_completed|function_call_output|custom_tool_call_output|local_shell_call_output)"|"role":"user"/.test(text)) {
       return;
     }
     let d: any;
@@ -157,7 +157,11 @@ export class SourceWatcher {
       const n = this.names.get(e.session.id);
       if (n) e.session.title = n;
     }
-    return [...this.sessions.values()].map((e) => e.session)
+    return [...this.sessions.values()]
+      .filter((e) => e.session.provider !== 'codex' || !(e.state as CodexState).excluded)
+      .filter((e) => Object.values(e.session.usage).some((n) => n > 0)
+        || (e.session.provider === 'codex' && (e.state as CodexState).responses.size > 0))
+      .map((e) => e.session)
       .filter((s) => !this.accountId || !s.account || s.account === this.accountId);
   }
 }

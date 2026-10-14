@@ -7,7 +7,7 @@ import { claudeLine, newClaudeState } from '../src/claude.ts';
 import { codexLine, newCodexState } from '../src/codex.ts';
 import { parseConfig } from '../src/config.ts';
 import { cost } from '../src/pricing.ts';
-import { newSession, tps } from '../src/session.ts';
+import { newSession, tps, tpsStats } from '../src/session.ts';
 import { SourceWatcher } from '../src/watcher.ts';
 
 const claudeMsg = (id: string, ts: string, usage: object, extra: object = {}) => ({
@@ -95,7 +95,7 @@ test('claude TPS: timed from tool result / prompt to the last streamed line, too
   assert.equal(tps(s), 300 / 10); // (100 + 200) tokens / (4s + 6s)
 });
 
-test('codex TPS: timed from input to token_usage_record, not the lagging token_count', () => {
+test('codex: request ends use token_usage_record; missing first-token timing gives no TPS', () => {
   const s = newSession('c', 'codex', 'codex');
   const st = newCodexState();
   const clock = { lastInput: 0 };
@@ -110,8 +110,68 @@ test('codex TPS: timed from input to token_usage_record, not the lagging token_c
   codexLine(s, st, tc('2026-10-08T00:01:04Z', { input_tokens: 10, output_tokens: 100 }), clock);
   codexLine(s, st, rec('2026-10-08T00:01:10Z', 'r2', 200), clock);
   assert.equal(s.reqs.length, 2);
-  assert.equal(tps(s), 300 / 10); // (100 + 200) / (4s + 6s)
+  assert.deepEqual(s.reqs.map((r) => r.end - r.start), [4000, 6000]);
+  assert.equal(tps(s), null);
   assert.equal(tps(newSession('x', 'x', 'codex')), null);
+});
+
+test('codex generation TPS: first-token timing applies only to the first response of each turn', () => {
+  const s = newSession('c', 'codex', 'codex'), st = newCodexState(), clock = { lastInput: 0 };
+  const line = (sec: number, type: string, payload: object) =>
+    codexLine(s, st, { timestamp: new Date(Date.UTC(2026, 9, 14) + sec * 1000).toISOString(), type, payload }, clock);
+  line(0, 'event_msg', { type: 'task_started', turn_id: 'one' });
+  line(0, 'response_item', { type: 'message', role: 'user' });
+  line(4, 'token_usage_record', { turn_id: 'one', response_id: 'r1', usage: { output_tokens: 100 } });
+  line(4, 'token_usage_record', { turn_id: 'one', response_id: 'r1', usage: { output_tokens: 100 } });
+  line(64, 'response_item', { type: 'custom_tool_call_output' });
+  line(68, 'token_usage_record', { turn_id: 'one', response_id: 'r2', usage: { output_tokens: 200 } });
+  line(68, 'event_msg', { type: 'task_complete', turn_id: 'one', time_to_first_token_ms: 2000 });
+  assert.deepEqual(tpsStats(s), { rate: 50, requests: 1 });
+  assert.equal(s.reqs[1].generationStart, undefined);
+  // An agent message starts a new turn after ten minutes idle, without a user prompt.
+  line(668, 'event_msg', { type: 'task_started', turn_id: 'two' });
+  line(668, 'response_item', { type: 'agent_message' });
+  line(674, 'token_usage_record', { turn_id: 'two', response_id: 'r3', usage: { output_tokens: 300 } });
+  line(674, 'event_msg', { type: 'task_complete', turn_id: 'two', time_to_first_token_ms: 2000 });
+  line(674, 'event_msg', { type: 'task_complete', turn_id: 'two', time_to_first_token_ms: 5000 });
+  assert.equal(s.reqs[2].end - s.reqs[2].start, 6000);
+  assert.deepEqual(tpsStats(s), { rate: 400 / 6, requests: 2 });
+  assert.equal(st.turns.size, 0);
+});
+
+test('codex generation TPS: invalid or missing timing is never replaced with an estimate', () => {
+  for (const wait of [undefined, null, -1, '2000', NaN, Infinity, 4000, 5000]) {
+    const s = newSession('c', 'codex', 'codex'), st = newCodexState();
+    const start = Date.UTC(2026, 9, 14);
+    const line = (ms: number, type: string, payload: object) =>
+      codexLine(s, st, { timestamp: new Date(start + ms).toISOString(), type, payload });
+    line(0, 'event_msg', { type: 'task_started', turn_id: 'one' });
+    line(4000, 'token_usage_record', { turn_id: 'one', response_id: 'r1', usage: { output_tokens: 100 } });
+    line(4000, 'event_msg', { type: 'task_complete', turn_id: 'one', time_to_first_token_ms: wait });
+    assert.deepEqual(tpsStats(s), { rate: null, requests: 0 });
+  }
+  const s = newSession('c', 'codex', 'codex');
+  s.reqs.push({ start: 0, generationStart: 2000, end: 2200, out: 10 });
+  assert.deepEqual(tpsStats(s), { rate: null, requests: 1 }); // not enough timed data yet
+});
+
+test('watcher: Codex generation timing arrives at turn completion and survives duplicate events', () => {
+  const home = mkdtempSync(join(tmpdir(), 'agenttop-tps-'));
+  const dir = join(home, 'sessions');
+  mkdirSync(dir);
+  const path = join(dir, 'rollout-2026-10-14T00-00-00-sess.jsonl');
+  const line = (sec: number, type: string, payload: object) =>
+    JSON.stringify({ timestamp: new Date(Date.UTC(2026, 9, 14) + sec * 1000).toISOString(), type, payload }) + '\n';
+  writeFileSync(path, line(0, 'event_msg', { type: 'task_started', turn_id: 'one' })
+    + line(4, 'token_usage_record', { turn_id: 'one', response_id: 'r1', usage: { output_tokens: 100 } }));
+  const watcher = new SourceWatcher({ name: 'codex', provider: 'codex', home }, 1);
+  watcher.scan(); watcher.poll();
+  const s = watcher.list()[0];
+  assert.equal(tps(s), null);
+  const done = line(4, 'event_msg', { type: 'task_complete', turn_id: 'one', time_to_first_token_ms: 2000 });
+  appendFileSync(path, done + done);
+  watcher.poll();
+  assert.deepEqual(tpsStats(s), { rate: 50, requests: 1 });
 });
 
 test('config: parses sources, expands ~, rejects bad provider', () => {
@@ -156,12 +216,36 @@ test('watcher: codex homes sharing a sessions dir are split by account id', () =
   const day = join(home, 'sessions', '2026', '10', '07');
   mkdirSync(day, { recursive: true });
   writeFileSync(join(home, 'auth.json'), JSON.stringify({ tokens: { account_id: 'acct-A' } }));
-  const meta = (acct: string) => JSON.stringify({ type: 'session_meta', payload: { cwd: '/p', creator_account_id: acct } }) + '\n';
+  const meta = (acct: string) => JSON.stringify({ type: 'session_meta', payload: { cwd: '/p', creator_account_id: acct } }) + '\n'
+    + JSON.stringify(tc('2026-10-08T00:00:00Z', { input_tokens: 10, output_tokens: 1 })) + '\n';
   writeFileSync(join(day, 'rollout-2026-10-07T00-00-00-aaa.jsonl'), meta('acct-A'));
   writeFileSync(join(day, 'rollout-2026-10-07T00-00-00-bbb.jsonl'), meta('acct-B'));
   const w = new SourceWatcher({ name: 'codex', provider: 'codex', home }, 1);
   w.scan(); w.poll();
   assert.deepEqual(w.list().map((s) => s.id), ['aaa']);
+});
+
+test('watcher: hides Codex internal reviewers and sessions without model usage', () => {
+  const home = mkdtempSync(join(tmpdir(), 'agenttop-codex-'));
+  const day = join(home, 'sessions');
+  mkdirSync(day);
+  const usage = JSON.stringify(tc('2026-10-08T00:00:00Z', { input_tokens: 10, output_tokens: 1 })) + '\n';
+  for (const kind of ['guardian', 'codex-guardian', 'auto_review', 'auto-review', 'codex-auto-review', 'worker', 'empty']) {
+    writeFileSync(join(day, `${kind}.jsonl`), JSON.stringify({ type: 'session_meta', payload: {
+      source: { subagent: { other: kind } },
+    } }) + '\n' + (kind === 'empty' ? '' : usage));
+  }
+  const w = new SourceWatcher({ name: 'codex', provider: 'codex', home }, 1);
+  w.scan(); w.poll();
+  assert.deepEqual(w.list().map((s) => s.id), ['worker']);
+
+  // A normal session becomes visible as soon as a response's usage is recorded,
+  // even when the cumulative token_count has not arrived yet.
+  appendFileSync(join(day, 'empty.jsonl'), JSON.stringify({ type: 'token_usage_record',
+    timestamp: '2026-10-08T00:00:01Z', payload: { response_id: 'r1', usage: { output_tokens: 5 } },
+  }) + '\n');
+  w.poll();
+  assert.deepEqual(w.list().map((s) => s.id).sort(), ['empty', 'worker']);
 });
 
 test('claude: user-set title beats auto title', () => {
@@ -193,4 +277,38 @@ test('codex cost: priced per response record, long-prompt tier per request, tota
   assert.ok(Math.abs(s.cost - small - big) < 1e-12);
   assert.equal(s.usage.output, 1100);
   assert.equal(s.unpriced, false);
+});
+
+test('tool errors: claude results attributed to their tool, codex failed items counted', () => {
+  const s = newSession('c', 'claude', 'claude');
+  const st = newClaudeState();
+  const use = (id: string, name: string, input: object) =>
+    ({ ...claudeMsg('m-' + id, '2026-10-08T00:00:00Z', u2), message: { id: 'm-' + id, model: 'claude-opus-5-5', usage: u2, content: [{ type: 'tool_use', id, name, input }] } });
+  const result = (id: string, content: any) =>
+    ({ type: 'user', timestamp: '2026-10-08T00:00:01Z', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content }] } });
+  claudeLine(s, st, use('t1', 'Bash', { command: 'cd /repo && FOO=1 gh pr list' }));
+  claudeLine(s, st, use('t1', 'Bash', { command: 'cd /repo && FOO=1 gh pr list' })); // streamed duplicate
+  claudeLine(s, st, use('t2', 'Read', { file_path: '/nope' }));
+  claudeLine(s, st, use('t3', 'Edit', {}));
+  claudeLine(s, st, result('t1', 'Exit code 1\nGraphQL: deprecated'));
+  claudeLine(s, st, result('t2', '<tool_use_error>File does not exist. Note: cwd is /repo</tool_use_error>'));
+  claudeLine(s, st, result('t3', [{ type: 'text', text: "The user doesn't want to proceed with this tool use." }]));
+  assert.equal(s.toolCalls, 3);
+  assert.deepEqual(s.toolErrors, { 'Bash(gh): exit 1': 1, 'Read: File does not exist': 1, 'Edit: rejected by user': 1 });
+
+  const x = newSession('x', 'codex', 'codex');
+  const xs = newCodexState();
+  const item = (item: object) => ({ type: 'event_msg', payload: { type: 'item_completed', item } });
+  codexLine(x, xs, item({ type: 'CommandExecution', command: ['/bin/zsh', '-lc', 'cat missing.ts'], status: 'failed', exit_code: 1 }));
+  codexLine(x, xs, item({ type: 'CommandExecution', command: ['/bin/zsh', '-lc', 'ls'], status: 'completed', exit_code: 0 }));
+  codexLine(x, xs, item({ type: 'McpToolCall', server: 'gh', tool: 'search', status: 'failed' }));
+  codexLine(x, xs, item({ type: 'Reasoning' }));
+  assert.equal(x.toolCalls, 3);
+  assert.deepEqual(x.toolErrors, { 'shell(cat): exit 1': 1, 'gh.search: failed': 1 });
+});
+
+test('pricing: fast mode is 2x on Opus 5.5, N/A where the fast rate is unknown', () => {
+  const u = { input: 1e6, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, output: 0, reasoning: 0 };
+  assert.equal(cost('claude-opus-5-5', u, true), 8);
+  assert.equal(cost('claude-opus-4-8', u, true), null);
 });

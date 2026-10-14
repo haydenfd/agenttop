@@ -1,6 +1,6 @@
 // Full-screen terminal UI with plain ANSI escapes (no dependencies).
 
-import { type Session, tps } from './session.ts';
+import { type Session, tpsStats } from './session.ts';
 import type { SourceWatcher } from './watcher.ts';
 
 const ESC = '\x1b[';
@@ -38,7 +38,9 @@ const fmtCache = (s: Session) => {
   const all = u.input + u.cacheRead + u.cacheWrite5m + u.cacheWrite1h;
   return all ? `${Math.round((100 * u.cacheRead) / all)}%` : NA;
 };
-const fmtTps = (s: Session) => { const t = tps(s); return t === null ? NA : t.toFixed(1); };
+const errCount = (s: Session) => Object.values(s.toolErrors).reduce((a, n) => a + n, 0);
+const fmtErr = (s: Session) => (s.toolCalls ? String(errCount(s)) : NA);
+const fmtTps = (s: Session) => { const t = tpsStats(s).rate; return t === null ? NA : t.toFixed(1); };
 
 interface Col { title: string; width: number; right?: boolean; prio: number; get: (s: Session, now: number) => string }
 // prio: lower = more important; columns with the highest prio are dropped first on narrow terminals.
@@ -53,6 +55,7 @@ const COLS: Col[] = [
   { title: 'OUT', width: 7, right: true, prio: 6, get: (s) => fmtTokens(s.usage.output) },
   { title: 'CTX', width: 5, right: true, prio: 2, get: fmtCtx },
   { title: 'TPS', width: 6, right: true, prio: 2, get: fmtTps },
+  { title: 'ERR', width: 4, right: true, prio: 3, get: fmtErr },
   { title: 'COST', width: 8, right: true, prio: 0, get: fmtCost },
   { title: 'LAST', width: 5, right: true, prio: 4, get: (s, now) => fmtAge(now - s.lastActive) },
 ];
@@ -166,20 +169,23 @@ export class Tui {
     while (lines.length < height - footer - detailLines.length) lines.push('');
     lines.push(...detailLines);
     lines.push('');
-    lines.push(c.dim(fit('←→/Tab/1-9 filter · ↑↓/jk navigate · Enter details · q/Esc/Ctrl+C exit · TPS = session output tok/s while requests are in flight', width)));
+    lines.push(c.dim(fit('←→/Tab/1-9 filter · ↑↓/jk navigate · Enter details · q/Esc/Ctrl+C exit · TPS: Codex generation speed; Claude includes startup', width)));
 
     this.out.write(`${ESC}H` + lines.slice(0, height).map((l) => l + `${ESC}K`).join('\r\n') + `${ESC}J`);
   }
 
   private detailLines(s: Session, now: number): string[] {
     const u = s.usage;
+    const timing = s.provider === 'codex' ? 'first-token timing, includes reasoning' : 'includes prompt processing';
     return [
       c.dim('─'.repeat(Math.min(this.out.columns || 80, 100))),
       `${c.bold(s.source)} · ${s.title || NA} · ${s.project || NA} · ${s.model ?? NA} · session ${s.id}`,
       `input ${fmtTokens(u.input)}  cache read ${fmtTokens(u.cacheRead)}  cache write ${fmtTokens(u.cacheWrite5m + u.cacheWrite1h)}  ` +
         `output ${fmtTokens(u.output)}  reasoning ${u.reasoning ? fmtTokens(u.reasoning) : NA}`,
       `context ${s.ctxTokens === null ? NA : fmtTokens(s.ctxTokens)} / ${s.ctxWindow ? fmtTokens(s.ctxWindow) : NA}  ` +
-        `TPS ${fmtTps(s)} (over ${s.reqs.length} requests, includes prompt processing)  cost ${fmtCost(s)}`,
+        `TPS ${fmtTps(s)} (${tpsStats(s).requests}/${s.reqs.length} requests measured; ${timing})  cost ${fmtCost(s)}`,
+      fit(`tool errors ${errCount(s)}/${s.toolCalls}` + Object.entries(s.toolErrors).sort((a, b) => b[1] - a[1])
+        .map(([k, n]) => `  ${k} ×${n}`).join(''), this.out.columns || 80),
     ];
   }
 }

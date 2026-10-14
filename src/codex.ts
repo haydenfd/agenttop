@@ -7,10 +7,13 @@
 
 import { basename } from 'node:path';
 import { cost } from './pricing.ts';
-import { type Clock, type Session, type Usage, zeroUsage, recordReq } from './session.ts';
+import { type Clock, type Req, type Session, type Usage, zeroUsage, recordReq, recordToolError, shellLabel } from './session.ts';
 
-export interface CodexState { prev: Usage; unpricedCount: number; lastEnd: number; responses: Set<string> }
-export const newCodexState = (): CodexState => ({ prev: zeroUsage(), unpricedCount: 0, lastEnd: 0, responses: new Set() });
+export interface CodexState {
+  prev: Usage; unpricedCount: number; lastEnd: number; responses: Set<string>; excluded: boolean;
+  turns: Map<string, { start: number; firstReq: Req | null }>;
+}
+export const newCodexState = (): CodexState => ({ prev: zeroUsage(), unpricedCount: 0, lastEnd: 0, responses: new Set(), excluded: false, turns: new Map() });
 
 function toUsage(t: any): Usage {
   const cached = t.cached_input_tokens ?? 0;
@@ -32,11 +35,27 @@ export function codexLine(s: Session, st: CodexState, d: any, clock: Clock = { l
   const p = d.payload;
   if (!p) return;
   const ts = Date.parse(d.timestamp) || 0;
+  if (d.type === 'event_msg' && p.type === 'task_started') {
+    if (p.turn_id && ts && !st.turns.has(p.turn_id)) st.turns.set(p.turn_id, { start: ts, firstReq: null });
+    return;
+  }
+  if (d.type === 'event_msg' && p.type === 'task_complete') {
+    const turn = st.turns.get(p.turn_id);
+    const wait = p.time_to_first_token_ms;
+    // Turn-level timing belongs only to its first response, never later tool continuations.
+    if (turn?.firstReq && typeof wait === 'number' && Number.isFinite(wait) && wait >= 0) {
+      const start = turn.start + wait;
+      if (start >= turn.firstReq.start && start < turn.firstReq.end) turn.firstReq.generationStart = start;
+    }
+    st.turns.delete(p.turn_id);
+    return;
+  }
   if (d.type === 'response_item' && (INPUT_ITEMS.has(p.type) || (p.type === 'message' && p.role === 'user'))) {
     if (ts) clock.lastInput = ts;
     return;
   }
   if (d.type === 'session_meta') {
+    st.excluded = /^(?:codex[-_])?(?:guardian|auto[-_]review)$/.test(p.source?.subagent?.other ?? '');
     if (p.cwd) s.project = basename(p.cwd);
     if (p.creator_account_id) s.account = p.creator_account_id;
     return;
@@ -51,9 +70,27 @@ export function codexLine(s: Session, st: CodexState, d: any, clock: Clock = { l
     const c = cost(s.model, toUsage(p.usage ?? {}));
     if (c === null) st.unpricedCount++; else s.cost += c;
     s.unpriced = st.unpricedCount > 0;
-    const start = Math.max(clock.lastInput, st.lastEnd);
-    if (start) recordReq(s, { start, end: ts, out: p.usage?.output_tokens ?? 0 });
+    const turn = st.turns.get(p.turn_id);
+    const start = Math.max(clock.lastInput, st.lastEnd, turn?.start ?? 0);
+    if (start) {
+      const req = { start, end: ts, out: p.usage?.output_tokens ?? 0 };
+      recordReq(s, req);
+      if (turn && !turn.firstReq) turn.firstReq = req;
+    }
     st.lastEnd = ts;
+    return;
+  }
+  // Finished tool runs: shell commands, patches, MCP calls. Anything not `completed` failed.
+  if (d.type === 'event_msg' && p.type === 'item_completed') {
+    const it = p.item ?? {};
+    const tool = it.type === 'CommandExecution' ? shellLabel('shell', [].concat(it.command ?? []).at(-1) ?? '')
+      : it.type === 'FileChange' ? 'apply_patch'
+      : it.type === 'McpToolCall' ? `${it.server}.${it.tool}` : null;
+    if (!tool) return;
+    s.toolCalls++;
+    if (it.status && it.status !== 'completed') {
+      recordToolError(s, tool, typeof it.exit_code === 'number' && it.exit_code >= 0 ? `exit ${it.exit_code}` : it.status);
+    }
     return;
   }
   if (d.type === 'turn_context') {
